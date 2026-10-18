@@ -46,6 +46,7 @@ class MainActivity : ComponentActivity() {
     private var videoStampEffect: OverlayEffect? = null
     private var activeRecording: Recording? = null
     private var videoMode = false
+    private lateinit var modeSwitchButton: TextView
     private var camera: androidx.camera.core.Camera? = null
     private var lens = CameraSelector.LENS_FACING_BACK
     private var latitude: Double? = null
@@ -163,16 +164,19 @@ class MainActivity : ComponentActivity() {
             gravity = Gravity.CENTER
             setPadding(dp(6), dp(8), dp(6), dp(4))
         }
-        tools.addView(toolButton(if (videoMode) "VIDEO" else "PHOTO", "Switch photo/video mode") {
+        modeSwitchButton = toolButton(if (videoMode) "🎥" else "📷", if (videoMode) "Video mode is active; tap to switch to photo" else "Photo mode is active; tap to switch to video") {
             if (activeRecording != null) {
                 Toast.makeText(this, "Stop recording before changing mode", Toast.LENGTH_SHORT).show()
             } else {
                 videoMode = !videoMode
+                modeSwitchButton.text = if (videoMode) "🎥" else "📷"
+                modeSwitchButton.contentDescription = if (videoMode) "Video mode is active; tap to switch to photo" else "Photo mode is active; tap to switch to video"
                 capture.text = if (videoMode) "▶" else "●"
                 capture.contentDescription = if (videoMode) "Start or stop video" else "Take photo"
                 startCamera()
             }
-        }, weightLp())
+        }
+        tools.addView(modeSwitchButton, weightLp())
         tools.addView(toolButton(if (flash) "⚡ ON" else "⚡", "Flash") {
             flash = !flash
             imageCapture?.flashMode = if (flash) ImageCapture.FLASH_MODE_ON else ImageCapture.FLASH_MODE_OFF

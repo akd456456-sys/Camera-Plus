@@ -86,6 +86,25 @@ class SettingsActivity : Activity() {
         root.addView(colorSpinner)
 
         root.addView(TextView(this).apply {
+            text = "Stamp background colour"
+            textSize = 14f
+            setTextColor(Color.WHITE)
+            setPadding(0, dp(14), 0, dp(5))
+        })
+        val backgroundColors = arrayOf("Deep charcoal", "Black", "White", "Dark green", "Navy blue")
+        val backgroundSpinner = Spinner(this).apply {
+            adapter = ArrayAdapter(this@SettingsActivity, android.R.layout.simple_spinner_dropdown_item, backgroundColors)
+            setSelection(prefs.getInt("stamp_bg_color", 0).coerceIn(backgroundColors.indices))
+        }
+        backgroundSpinner.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
+            override fun onNothingSelected(parent: AdapterView<*>?) {}
+            override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) {
+                prefs.edit().putInt("stamp_bg_color", position).apply()
+            }
+        }
+        root.addView(backgroundSpinner)
+
+        root.addView(TextView(this).apply {
             text = "Photo effect"
             textSize = 14f
             setTextColor(Color.WHITE)
@@ -108,7 +127,25 @@ class SettingsActivity : Activity() {
             text = "Save / Done"
             setOnClickListener { finish() }
         })
-        setContentView(ScrollView(this).apply { addView(root) })
+        // Spacer pushes the India footer to the bottom when the page content fits.
+        root.addView(View(this), LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f
+        ))
+        root.addView(TextView(this).apply {
+            text = "Proudly Made in India with love 🇮🇳"
+            textSize = 12f
+            gravity = android.view.Gravity.CENTER
+            setTextColor(Color.rgb(115, 231, 202))
+            setPadding(0, dp(18), 0, dp(8))
+        })
+        val scroll = ScrollView(this).apply {
+            isFillViewport = true
+            addView(root, ScrollView.LayoutParams(
+                ScrollView.LayoutParams.MATCH_PARENT,
+                ScrollView.LayoutParams.MATCH_PARENT
+            ))
+        }
+        setContentView(scroll)
     }
 
     private fun addSlider(
