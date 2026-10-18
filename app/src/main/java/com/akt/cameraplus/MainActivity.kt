@@ -8,6 +8,8 @@ import android.location.Address
 import android.location.Geocoder
 import android.net.Uri
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import android.os.Bundle
 import android.provider.MediaStore
 import android.view.Gravity
@@ -17,6 +19,8 @@ import android.widget.*
 import androidx.activity.ComponentActivity
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.camera.core.*
+import androidx.camera.effects.OverlayEffect
+import androidx.camera.video.*
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
 import androidx.core.content.ContextCompat
@@ -38,6 +42,10 @@ class MainActivity : ComponentActivity() {
     private lateinit var mapButton: TextView
     private lateinit var cameraExecutor: ExecutorService
     private var imageCapture: ImageCapture? = null
+    private var videoCapture: VideoCapture<Recorder>? = null
+    private var videoStampEffect: OverlayEffect? = null
+    private var activeRecording: Recording? = null
+    private var videoMode = false
     private var camera: androidx.camera.core.Camera? = null
     private var lens = CameraSelector.LENS_FACING_BACK
     private var latitude: Double? = null
@@ -62,6 +70,13 @@ class MainActivity : ComponentActivity() {
         val missing = needed.filter { ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED }
         if (missing.isNotEmpty()) permissionLauncher.launch(missing.toTypedArray())
         else { startCamera(); refreshLocation() }
+    }
+
+    override fun onDestroy() {
+        activeRecording?.stop()
+        videoStampEffect?.close()
+        cameraExecutor.shutdown()
+        super.onDestroy()
     }
 
     override fun onResume() {
@@ -148,6 +163,16 @@ class MainActivity : ComponentActivity() {
             gravity = Gravity.CENTER
             setPadding(dp(6), dp(8), dp(6), dp(4))
         }
+        tools.addView(toolButton(if (videoMode) "VIDEO" else "PHOTO", "Switch photo/video mode") {
+            if (activeRecording != null) {
+                Toast.makeText(this, "Stop recording before changing mode", Toast.LENGTH_SHORT).show()
+            } else {
+                videoMode = !videoMode
+                capture.text = if (videoMode) "▶" else "●"
+                capture.contentDescription = if (videoMode) "Start or stop video" else "Take photo"
+                startCamera()
+            }
+        }, weightLp())
         tools.addView(toolButton(if (flash) "⚡ ON" else "⚡", "Flash") {
             flash = !flash
             imageCapture?.flashMode = if (flash) ImageCapture.FLASH_MODE_ON else ImageCapture.FLASH_MODE_OFF
@@ -157,8 +182,12 @@ class MainActivity : ComponentActivity() {
         tools.addView(toolButton("1×", "Reset zoom") { setZoom(1f) }, weightLp())
         tools.addView(toolButton("+", "Zoom in") { setZoom((zoomRatio + .25f).coerceAtMost(camera?.cameraInfo?.zoomState?.value?.maxZoomRatio ?: 4f)) }, weightLp())
         tools.addView(toolButton("⇄", "Switch camera") {
-            lens = if (lens == CameraSelector.LENS_FACING_BACK) CameraSelector.LENS_FACING_FRONT else CameraSelector.LENS_FACING_BACK
-            startCamera()
+            if (activeRecording != null) {
+                Toast.makeText(this, "Stop recording before switching camera", Toast.LENGTH_SHORT).show()
+            } else {
+                lens = if (lens == CameraSelector.LENS_FACING_BACK) CameraSelector.LENS_FACING_FRONT else CameraSelector.LENS_FACING_BACK
+                startCamera()
+            }
         }, weightLp())
         tools.addView(toolButton("▧", "Gallery") { openGallery() }, weightLp())
         root.addView(tools)
@@ -206,7 +235,9 @@ class MainActivity : ComponentActivity() {
             setTextColor(Color.WHITE)
             background = rounded(Color.rgb(26, 190, 160), dp(36))
             contentDescription = "Take photo"
-            setOnClickListener { takePhoto() }
+            setOnClickListener {
+                if (videoMode) toggleVideoRecording() else takePhoto()
+            }
         }
         shutterRow.addView(capture, LinearLayout.LayoutParams(dp(76), dp(58)))
         val settings = TextView(this).apply {
@@ -249,14 +280,43 @@ class MainActivity : ComponentActivity() {
                 .setCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY)
                 .setFlashMode(if (flash) ImageCapture.FLASH_MODE_ON else ImageCapture.FLASH_MODE_OFF)
                 .build()
+            val recorder = Recorder.Builder()
+                .setQualitySelector(QualitySelector.from(Quality.HD, FallbackStrategy.lowerQualityOrHigherThan(Quality.SD)))
+                .build()
+            videoCapture = VideoCapture.withOutput(recorder)
             try {
                 provider.unbindAll()
+                videoStampEffect?.close()
+                // CameraX burns this dynamic GPS/address/date panel into every recorded video frame.
+                val stampEffect = OverlayEffect(
+                    CameraEffect.VIDEO_CAPTURE,
+                    0,
+                    Handler(Looper.getMainLooper())
+                ) { error ->
+                    runOnUiThread {
+                        Toast.makeText(this, "Video stamp effect error: ${error.message}", Toast.LENGTH_LONG).show()
+                    }
+                }
+                stampEffect.setOnDrawListener { frame ->
+                    drawVideoStamp(frame.overlayCanvas)
+                    true
+                }
+                videoStampEffect = stampEffect
+
+                val group = UseCaseGroup.Builder()
+                    .addUseCase(preview)
+                    .addUseCase(imageCapture!!)
+                    .addUseCase(videoCapture!!)
+                    .addEffect(stampEffect)
+                    .build()
                 camera = provider.bindToLifecycle(
-                    this, CameraSelector.Builder().requireLensFacing(lens).build(), preview, imageCapture
+                    this, CameraSelector.Builder().requireLensFacing(lens).build(), group
                 )
                 camera?.cameraControl?.setExposureCompensationIndex(exposure)
                 camera?.cameraControl?.setZoomRatio(zoomRatio.coerceAtLeast(1f))
             } catch (e: Exception) {
+                videoStampEffect?.close()
+                videoStampEffect = null
                 Toast.makeText(this, "Camera could not start: ${e.message}", Toast.LENGTH_LONG).show()
             }
         }, ContextCompat.getMainExecutor(this))
@@ -357,6 +417,63 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    /** Draws the same GPS/address/date identity stamp onto each encoded video frame. */
+    private fun drawVideoStamp(canvas: Canvas) {
+        val w = canvas.width.toFloat()
+        val h = canvas.height.toFloat()
+        if (w <= 0f || h <= 0f) return
+        val scale = w / 1000f
+        val pad = 18f * scale
+        val textSize = prefs.getInt("stamp_text_size", 23).coerceIn(12, 40) * scale
+        val lines = mutableListOf<Pair<String, Boolean>>()
+        if (prefs.getBoolean("stamp_address", true) && address.isNotBlank()) {
+            lines.add("${address.trim()}  🇮🇳" to true)
+        }
+        if (prefs.getBoolean("stamp_date", true)) {
+            lines.add(SimpleDateFormat("dd MMM yyyy  |  hh:mm a", Locale.getDefault()).format(Date()) to false)
+        }
+        if (prefs.getBoolean("stamp_gps", true)) {
+            val lat = latitude
+            val lon = longitude
+            lines.add((if (lat != null) String.format(Locale.US, "Latitude: %.6f", lat) else "Latitude: unavailable") to false)
+            lines.add((if (lon != null) String.format(Locale.US, "Longitude: %.6f", lon) else "Longitude: unavailable") to false)
+        }
+        lines.add("✎  App by AKT" to false)
+        val lineHeight = textSize * 1.42f
+        val panelHeight = lines.size * lineHeight + pad * 1.3f
+        val left = pad
+        val bottom = h - pad
+        val top = bottom - panelHeight
+        val opacity = prefs.getInt("stamp_opacity", 68).coerceIn(10, 100)
+        val bg = when (prefs.getInt("stamp_bg_color", 0)) {
+            1 -> Color.BLACK
+            2 -> Color.WHITE
+            3 -> Color.rgb(20, 75, 55)
+            4 -> Color.rgb(35, 55, 115)
+            else -> Color.rgb(7, 12, 20)
+        }
+        val panelPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.argb(opacity * 255 / 100, Color.red(bg), Color.green(bg), Color.blue(bg))
+        }
+        canvas.drawRoundRect(RectF(left, top, w - pad, bottom), 14f * scale, 14f * scale, panelPaint)
+        val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = if (prefs.getInt("stamp_bg_color", 0) == 2) Color.BLACK else when (prefs.getInt("stamp_color", 0)) {
+                1 -> Color.YELLOW
+                2 -> Color.rgb(115, 231, 202)
+                else -> Color.WHITE
+            }
+            this.textSize = textSize
+            setShadowLayer(2f * scale, 1f, 1f, Color.BLACK)
+        }
+        val maxTextWidth = w - pad * 3f
+        lines.forEachIndexed { index, (line, isAddress) ->
+            textPaint.typeface = if (isAddress) Typeface.DEFAULT_BOLD else Typeface.DEFAULT
+            textPaint.textSize = if (isAddress) textSize * 1.08f else textSize
+            val fitted = fitStampText(line, textPaint, maxTextWidth)
+            canvas.drawText(fitted, pad * 1.5f, top + pad * .65f + (index + 1) * lineHeight, textPaint)
+        }
+    }
+
     private fun takePhoto() {
         val cap = imageCapture ?: return
         capture.isEnabled = false
@@ -387,6 +504,53 @@ class MainActivity : ComponentActivity() {
                 runOnUiThread { capture.isEnabled = true; Toast.makeText(this@MainActivity, "Capture failed", Toast.LENGTH_SHORT).show() }
             }
         })
+    }
+
+    private fun toggleVideoRecording() {
+        val vc = videoCapture ?: run {
+            Toast.makeText(this, "Video camera is not ready yet", Toast.LENGTH_SHORT).show()
+            return
+        }
+        val current = activeRecording
+        if (current != null) {
+            current.stop()
+            capture.text = "■"
+            Toast.makeText(this, "Stopping video…", Toast.LENGTH_SHORT).show()
+            return
+        }
+        val name = "CameraPlus_${SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())}.mp4"
+        val values = ContentValues().apply {
+            put(MediaStore.Video.Media.DISPLAY_NAME, name)
+            put(MediaStore.Video.Media.MIME_TYPE, "video/mp4")
+            if (Build.VERSION.SDK_INT >= 29) put(MediaStore.Video.Media.RELATIVE_PATH, "Movies/CameraPlus")
+        }
+        val output = MediaStoreOutputOptions.Builder(
+            contentResolver, MediaStore.Video.Media.EXTERNAL_CONTENT_URI
+        ).setContentValues(values).build()
+        var pending = vc.output.prepareRecording(this, output)
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
+            pending = pending.withAudioEnabled()
+        } else {
+            Toast.makeText(this, "Recording video without audio (microphone permission not granted)", Toast.LENGTH_LONG).show()
+        }
+        capture.text = "■"
+        activeRecording = pending.start(ContextCompat.getMainExecutor(this)) { event ->
+            when (event) {
+                is VideoRecordEvent.Start -> {
+                    capture.text = "■"
+                    Toast.makeText(this, "Recording video… tap ■ to stop", Toast.LENGTH_SHORT).show()
+                }
+                is VideoRecordEvent.Finalize -> {
+                    activeRecording = null
+                    capture.text = "▶"
+                    if (event.hasError()) {
+                        Toast.makeText(this, "Video save failed: ${event.error}", Toast.LENGTH_LONG).show()
+                    } else {
+                        Toast.makeText(this, "Video saved to Movies/CameraPlus", Toast.LENGTH_LONG).show()
+                    }
+                }
+            }
+        }
     }
 
     private fun applyEffect(src: Bitmap): Bitmap {
@@ -434,12 +598,19 @@ class MainActivity : ComponentActivity() {
         val panelTop = panelBottom - panelH
         val opacity = prefs.getInt("stamp_opacity", 68).coerceIn(10, 100)
         val panelPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = Color.argb((opacity * 255 / 100), 7, 12, 20)
+            val bg = when (prefs.getInt("stamp_bg_color", 0)) {
+                1 -> Color.BLACK
+                2 -> Color.WHITE
+                3 -> Color.rgb(20, 75, 55)
+                4 -> Color.rgb(35, 55, 115)
+                else -> Color.rgb(7, 12, 20)
+            }
+            color = Color.argb((opacity * 255 / 100), Color.red(bg), Color.green(bg), Color.blue(bg))
         }
         canvas.drawRoundRect(RectF(pad, panelTop, out.width - pad, panelBottom), 16f * scale, 16f * scale, panelPaint)
 
         val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = when (prefs.getInt("stamp_color", 0)) {
+            color = if (prefs.getInt("stamp_bg_color", 0) == 2) Color.BLACK else when (prefs.getInt("stamp_color", 0)) {
                 1 -> Color.YELLOW
                 2 -> Color.rgb(115, 231, 202)
                 else -> Color.WHITE
@@ -501,5 +672,9 @@ class MainActivity : ComponentActivity() {
         try { startActivity(intent) } catch (_: Exception) { Toast.makeText(this, "Open Gallery from your phone", Toast.LENGTH_SHORT).show() }
     }
 
-    override fun onDestroy() { super.onDestroy(); cameraExecutor.shutdown() }
+    override fun onDestroy() {
+        activeRecording?.stop()
+        super.onDestroy()
+        cameraExecutor.shutdown()
+    }
 }
