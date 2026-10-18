@@ -5,6 +5,7 @@ import android.os.Bundle
 import android.graphics.Color
 import android.graphics.Typeface
 import android.view.View
+import android.view.ViewGroup
 import android.widget.*
 
 class SettingsActivity : Activity() {
@@ -31,7 +32,7 @@ class SettingsActivity : Activity() {
             setPadding(0, dp(6), 0, dp(18))
         })
 
-        // Branding is intentionally not a checkbox: the sketch mark + App by AKT
+        // Branding is intentionally not a checkbox: sketch mark + App by AKT
         // remains on every stamped photo, as requested.
         val options = listOf(
             "stamp_date" to "Date and time",
@@ -51,20 +52,10 @@ class SettingsActivity : Activity() {
             root.addView(check)
         }
 
-        addSlider(root,
-            title = "Stamp background opacity",
-            min = 10, max = 100,
-            initial = prefs.getInt("stamp_opacity", 68),
-            suffix = "% (higher = less transparent)",
-            key = "stamp_opacity"
-        )
-        addSlider(root,
-            title = "Stamp text size",
-            min = 12, max = 40,
-            initial = prefs.getInt("stamp_text_size", 23),
-            suffix = " px scale",
-            key = "stamp_text_size"
-        )
+        addSlider(root, "Stamp background opacity", 10, 100,
+            prefs.getInt("stamp_opacity", 68), "% (higher = less transparent)", "stamp_opacity")
+        addSlider(root, "Stamp text size", 12, 40,
+            prefs.getInt("stamp_text_size", 23), " px scale", "stamp_text_size")
 
         root.addView(TextView(this).apply {
             text = "Watermark text color"
@@ -127,9 +118,11 @@ class SettingsActivity : Activity() {
             text = "Save / Done"
             setOnClickListener { finish() }
         })
-        // Spacer pushes the India footer to the bottom when the page content fits.
+
+        // Use ViewGroup.LayoutParams constants explicitly to avoid Kotlin's
+        // unresolved LinearLayout.LayoutParams.MATCH_PARENT reference.
         root.addView(View(this), LinearLayout.LayoutParams(
-            LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f
+            ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f
         ))
         root.addView(TextView(this).apply {
             text = "Proudly Made in India with love 🇮🇳"
@@ -138,11 +131,12 @@ class SettingsActivity : Activity() {
             setTextColor(Color.rgb(115, 231, 202))
             setPadding(0, dp(18), 0, dp(8))
         })
+
         val scroll = ScrollView(this).apply {
             isFillViewport = true
-            addView(root, ScrollView.LayoutParams(
-                ScrollView.LayoutParams.MATCH_PARENT,
-                ScrollView.LayoutParams.MATCH_PARENT
+            addView(root, ViewGroup.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT
             ))
         }
         setContentView(scroll)
