@@ -3,7 +3,8 @@ package com.akt.cameraplus
 import android.app.Activity
 import android.os.Bundle
 import android.graphics.Color
-import android.view.Gravity
+import android.graphics.Typeface
+import android.view.View
 import android.widget.*
 
 class SettingsActivity : Activity() {
@@ -11,30 +12,32 @@ class SettingsActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(22, 22, 22, 22)
+            setPadding(dp(22), dp(22), dp(22), dp(22))
             setBackgroundColor(Color.rgb(12, 16, 23))
         }
         root.addView(TextView(this).apply {
             text = "Camera+ Settings"
             textSize = 25f
-            typeface = android.graphics.Typeface.create("sans-serif-medium", android.graphics.Typeface.BOLD)
+            typeface = Typeface.create("sans-serif-medium", Typeface.BOLD)
             setTextColor(Color.WHITE)
         })
         root.addView(TextView(this).apply {
-            text = "Choose the details printed on your photo"
+            text = "Customize the information and appearance printed on your photos"
             textSize = 13f
             setTextColor(Color.LTGRAY)
-            setPadding(0, 6, 0, 18)
+            setPadding(0, dp(6), 0, dp(18))
         })
 
+        // Branding is intentionally not a checkbox: the sketch mark + App by AKT
+        // remains on every stamped photo, as requested.
         val options = listOf(
             "stamp_date" to "Date and time",
-            "stamp_gps" to "GPS coordinates",
-            "stamp_address" to "Readable address",
-            "stamp_qr" to "Add Maps QR code to photo (scan to open location)",
-            "stamp_brand" to "Hand-sketched mark + App by AKT"
+            "stamp_gps" to "Latitude / longitude coordinates",
+            "stamp_address" to "Readable address (shown first, with India flag)",
+            "stamp_qr" to "Add Maps QR code to photo (scan to open location)"
         )
         options.forEach { (key, label) ->
             val check = CheckBox(this).apply {
@@ -48,20 +51,35 @@ class SettingsActivity : Activity() {
             root.addView(check)
         }
 
+        addSlider(root,
+            title = "Stamp background opacity",
+            min = 10, max = 100,
+            initial = prefs.getInt("stamp_opacity", 68),
+            suffix = "% (higher = less transparent)",
+            key = "stamp_opacity"
+        )
+        addSlider(root,
+            title = "Stamp text size",
+            min = 12, max = 40,
+            initial = prefs.getInt("stamp_text_size", 23),
+            suffix = " px scale",
+            key = "stamp_text_size"
+        )
+
         root.addView(TextView(this).apply {
             text = "Watermark text color"
             textSize = 14f
             setTextColor(Color.WHITE)
-            setPadding(0, 14, 0, 5)
+            setPadding(0, dp(14), 0, dp(5))
         })
         val colors = arrayOf("White", "Warm yellow", "Mint")
         val colorSpinner = Spinner(this).apply {
             adapter = ArrayAdapter(this@SettingsActivity, android.R.layout.simple_spinner_dropdown_item, colors)
-            setSelection(prefs.getInt("stamp_color", 0))
+            setSelection(prefs.getInt("stamp_color", 0).coerceIn(colors.indices))
         }
-        colorSpinner.onItemSelectedListener = object : android.widget.AdapterView.OnItemSelectedListener {
-            override fun onNothingSelected(parent: android.widget.AdapterView<*>?) {}
-            override fun onItemSelected(parent: android.widget.AdapterView<*>?, view: android.view.View?, position: Int, id: Long) {
+        colorSpinner.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
+            override fun onNothingSelected(parent: AdapterView<*>?) {}
+            override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) {
                 prefs.edit().putInt("stamp_color", position).apply()
             }
         }
@@ -71,16 +89,16 @@ class SettingsActivity : Activity() {
             text = "Photo effect"
             textSize = 14f
             setTextColor(Color.WHITE)
-            setPadding(0, 14, 0, 5)
+            setPadding(0, dp(14), 0, dp(5))
         })
         val effects = arrayOf("Natural", "Black & white", "Sepia")
         val effectSpinner = Spinner(this).apply {
             adapter = ArrayAdapter(this@SettingsActivity, android.R.layout.simple_spinner_dropdown_item, effects)
-            setSelection(prefs.getInt("effect", 0))
+            setSelection(prefs.getInt("effect", 0).coerceIn(effects.indices))
         }
-        effectSpinner.onItemSelectedListener = object : android.widget.AdapterView.OnItemSelectedListener {
-            override fun onNothingSelected(parent: android.widget.AdapterView<*>?) {}
-            override fun onItemSelected(parent: android.widget.AdapterView<*>?, view: android.view.View?, position: Int, id: Long) {
+        effectSpinner.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
+            override fun onNothingSelected(parent: AdapterView<*>?) {}
+            override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) {
                 prefs.edit().putInt("effect", position).apply()
             }
         }
@@ -92,4 +110,43 @@ class SettingsActivity : Activity() {
         })
         setContentView(ScrollView(this).apply { addView(root) })
     }
+
+    private fun addSlider(
+        parent: LinearLayout,
+        title: String,
+        min: Int,
+        max: Int,
+        initial: Int,
+        suffix: String,
+        key: String
+    ) {
+        val label = TextView(this).apply {
+            textSize = 14f
+            setTextColor(Color.WHITE)
+            setPadding(0, dp(16), 0, dp(3))
+        }
+        parent.addView(label)
+        val slider = SeekBar(this).apply {
+            this.max = max - min
+            progress = initial.coerceIn(min, max) - min
+            contentDescription = title
+        }
+        slider.progressTintList = android.content.res.ColorStateList.valueOf(Color.rgb(105, 220, 190))
+        slider.thumbTintList = android.content.res.ColorStateList.valueOf(Color.rgb(105, 220, 190))
+        fun update(value: Int) {
+            label.text = "$title: $value$suffix"
+            prefs.edit().putInt(key, value).apply()
+        }
+        update(min + slider.progress)
+        slider.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
+                update(min + progress)
+            }
+            override fun onStartTrackingTouch(seekBar: SeekBar?) {}
+            override fun onStopTrackingTouch(seekBar: SeekBar?) {}
+        })
+        parent.addView(slider)
+    }
+
+    private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
 }

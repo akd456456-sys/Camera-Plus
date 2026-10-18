@@ -408,36 +408,59 @@ class MainActivity : ComponentActivity() {
         val scale = out.width / 1000f
         val pad = 20f * scale
         val date = SimpleDateFormat("dd MMM yyyy  |  hh:mm a", Locale.getDefault()).format(Date())
-        val gps = if (latitude != null && longitude != null)
-            String.format(Locale.US, "GPS  %.6f, %.6f", latitude, longitude) else "GPS fix unavailable"
-        val lines = mutableListOf<String>()
-        if (prefs.getBoolean("stamp_date", true)) lines.add(date)
-        if (prefs.getBoolean("stamp_gps", true)) lines.add(gps)
-        if (prefs.getBoolean("stamp_address", true) && address.isNotBlank()) lines.add(address.take(120))
-        if (prefs.getBoolean("stamp_brand", true)) lines.add("App by AKT")
-        val qrOn = prefs.getBoolean("stamp_qr", true) && latitude != null && longitude != null
-        val textSize = 23f * scale
-        val lineH = 31f * scale
+        val lat = latitude
+        val lon = longitude
+        val coordinateLines = if (lat != null && lon != null) listOf(
+            String.format(Locale.US, "Latitude: %.6f", lat),
+            String.format(Locale.US, "Longitude: %.6f", lon)
+        ) else listOf("Latitude: unavailable", "Longitude: unavailable")
+
+        // Address is intentionally the first, bold stamp line; flag follows its text.
+        val addressLineText = if (prefs.getBoolean("stamp_address", true) && address.isNotBlank())
+            "${address.trim()}  🇮🇳" else null
+        val lines = mutableListOf<Pair<String, Boolean>>()
+        if (addressLineText != null) lines.add(addressLineText to true)
+        if (prefs.getBoolean("stamp_date", true)) lines.add(date to false)
+        if (prefs.getBoolean("stamp_gps", true)) coordinateLines.forEach { lines.add(it to false) }
+        // Branding is deliberately permanent (not a Settings toggle); retain the sketch mark.
+        lines.add("✎  App by AKT" to false)
+
+        val qrOn = prefs.getBoolean("stamp_qr", true) && lat != null && lon != null
+        val textSize = prefs.getInt("stamp_text_size", 23).coerceIn(12, 40) * scale
+        val lineH = textSize * 1.42f
         val qrSize = if (qrOn) 118f * scale else 0f
-        val panelH = lines.size * lineH + pad
+        val panelH = lines.size * lineH + pad * 1.35f
         val panelBottom = out.height - pad
         val panelTop = panelBottom - panelH
-        val panel = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.argb(174, 7, 12, 20) }
-        canvas.drawRoundRect(RectF(pad, panelTop, out.width - pad, panelBottom), 16f * scale, 16f * scale, panel)
+        val opacity = prefs.getInt("stamp_opacity", 68).coerceIn(10, 100)
+        val panelPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.argb((opacity * 255 / 100), 7, 12, 20)
+        }
+        canvas.drawRoundRect(RectF(pad, panelTop, out.width - pad, panelBottom), 16f * scale, 16f * scale, panelPaint)
+
         val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = when (prefs.getInt("stamp_color", 0)) { 1 -> Color.YELLOW; 2 -> Color.rgb(115,231,202); else -> Color.WHITE }
+            color = when (prefs.getInt("stamp_color", 0)) {
+                1 -> Color.YELLOW
+                2 -> Color.rgb(115, 231, 202)
+                else -> Color.WHITE
+            }
             this.textSize = textSize
             setShadowLayer(2f * scale, 1f, 1f, Color.BLACK)
         }
-        lines.forEachIndexed { index, text ->
-            val isBrand = text == "App by AKT"
-            textPaint.textSize = if (isBrand) 18f * scale else textSize
-            val prefix = if (isBrand) "✎  " else ""
-            canvas.drawText(prefix + text, pad * 1.7f, panelTop + (index + 1) * lineH, textPaint)
+        val left = pad * 1.7f
+        val rightLimit = out.width - pad * 1.7f - if (qrOn) qrSize + pad else 0f
+        lines.forEachIndexed { index, (raw, isAddress) ->
+            textPaint.textSize = if (isAddress) textSize * 1.08f else textSize
+            textPaint.typeface = if (isAddress) Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+                else Typeface.create(Typeface.DEFAULT, Typeface.NORMAL)
+            val text = fitStampText(raw, textPaint, (rightLimit - left).coerceAtLeast(1f))
+            val baseline = panelTop + pad * .65f + (index + 1) * lineH
+            canvas.drawText(text, left, baseline, textPaint)
         }
+
         if (qrOn) {
             try {
-                val mapsUrl = "https://www.google.com/maps/search/?api=1&query=$latitude,$longitude"
+                val mapsUrl = "https://www.google.com/maps/search/?api=1&query=$lat,$lon"
                 val matrix = QRCodeWriter().encode(mapsUrl, BarcodeFormat.QR_CODE, 180, 180)
                 val qr = Bitmap.createBitmap(180, 180, Bitmap.Config.ARGB_8888)
                 for (x in 0 until 180) for (y in 0 until 180)
@@ -448,6 +471,14 @@ class MainActivity : ComponentActivity() {
             } catch (_: Exception) {}
         }
         return out
+    }
+
+    private fun fitStampText(text: String, paint: Paint, maxWidth: Float): String {
+        if (paint.measureText(text) <= maxWidth) return text
+        val suffix = "…"
+        var end = text.length
+        while (end > 1 && paint.measureText(text.substring(0, end) + suffix) > maxWidth) end--
+        return text.substring(0, end).trimEnd() + suffix
     }
 
     private fun saveBitmap(bitmap: Bitmap) {
