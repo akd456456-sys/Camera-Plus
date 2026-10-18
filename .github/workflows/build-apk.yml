@@ -15,7 +15,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout source
+      - name: Checkout
         uses: actions/checkout@v4
 
       - name: Set up JDK 17
@@ -24,18 +24,32 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Set up Android SDK and accept licenses
-        uses: android-actions/setup-android@v3
+      # SDK tools install kare; license prompt yahan disable hai
+      - name: Set up Android SDK tools
+        uses: android-actions/setup-android@v4
         with:
-          accept-android-sdk-licenses: true
-          packages: |
-            platforms;android-35
-            build-tools;35.0.0
+          accept-android-sdk-licenses: false
+          packages: ''
 
-      - name: Check Android SDK
+      # License agreements ko non-interactive tarike se accept kare
+      - name: Accept Android SDK licenses
+        shell: bash
         run: |
-          echo "ANDROID_HOME=$ANDROID_HOME"
+          set -o pipefail
+          yes | sdkmanager --licenses
+
+      # Required SDK components install kare
+      - name: Install Android SDK packages
+        run: |
+          sdkmanager --install \
+            "platform-tools" \
+            "platforms;android-35" \
+            "build-tools;35.0.0"
+
+      - name: Verify Android SDK
+        run: |
           sdkmanager --list_installed
+          test -d "$ANDROID_HOME/platforms/android-35"
 
       - name: Build debug APK
         run: |
@@ -48,4 +62,3 @@ jobs:
           name: Camera-Plus-debug-apk
           path: app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
-          
