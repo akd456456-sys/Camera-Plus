@@ -38,7 +38,7 @@ class MainActivity : ComponentActivity() {
     private lateinit var mapButton: TextView
     private lateinit var cameraExecutor: ExecutorService
     private var imageCapture: ImageCapture? = null
-    private var camera: Camera? = null
+    private var camera: androidx.camera.core.Camera? = null
     private var lens = CameraSelector.LENS_FACING_BACK
     private var latitude: Double? = null
     private var longitude: Double? = null
