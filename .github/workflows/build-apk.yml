@@ -24,32 +24,57 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      # SDK tools install kare; license prompt yahan disable hai
-      - name: Set up Android SDK tools
+      - name: Set up Android SDK command-line tools
         uses: android-actions/setup-android@v4
         with:
           accept-android-sdk-licenses: false
           packages: ''
 
-      # License agreements ko non-interactive tarike se accept kare
-      - name: Accept Android SDK licenses
+      - name: Accept SDK licenses safely
         shell: bash
         run: |
-          set -o pipefail
-          yes | sdkmanager --licenses
+          set +e
+          set +o pipefail
 
-      # Required SDK components install kare
-      - name: Install Android SDK packages
+          yes | sdkmanager --licenses
+          sdk_status=${PIPESTATUS[1]}
+
+          set -e
+          set -o pipefail
+
+          if [ "$sdk_status" -ne 0 ]; then
+            echo "sdkmanager license acceptance failed."
+            exit "$sdk_status"
+          fi
+
+          echo "sdkmanager license command completed successfully."
+
+      - name: Install required Android SDK packages
+        shell: bash
         run: |
-          sdkmanager --install \
+          set +e
+          set +o pipefail
+
+          yes | sdkmanager --install \
             "platform-tools" \
             "platforms;android-35" \
             "build-tools;35.0.0"
+
+          sdk_status=${PIPESTATUS[1]}
+
+          set -e
+          set -o pipefail
+
+          if [ "$sdk_status" -ne 0 ]; then
+            echo "SDK package installation failed."
+            exit "$sdk_status"
+          fi
 
       - name: Verify Android SDK
         run: |
           sdkmanager --list_installed
           test -d "$ANDROID_HOME/platforms/android-35"
+          test -d "$ANDROID_HOME/build-tools/35.0.0"
 
       - name: Build debug APK
         run: |
@@ -62,3 +87,4 @@ jobs:
           name: Camera-Plus-debug-apk
           path: app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
+          
