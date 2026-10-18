@@ -672,9 +672,4 @@ class MainActivity : ComponentActivity() {
         try { startActivity(intent) } catch (_: Exception) { Toast.makeText(this, "Open Gallery from your phone", Toast.LENGTH_SHORT).show() }
     }
 
-    override fun onDestroy() {
-        activeRecording?.stop()
-        super.onDestroy()
-        cameraExecutor.shutdown()
-    }
 }
