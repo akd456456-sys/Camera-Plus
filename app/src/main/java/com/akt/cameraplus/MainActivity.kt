@@ -57,6 +57,13 @@ class MainActivity : ComponentActivity() {
     private var zoomRatio = 1f
     private val prefs by lazy { getSharedPreferences("stamp_prefs", MODE_PRIVATE) }
 
+    private val microphonePermissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        if (granted) toggleVideoRecording()
+        else Toast.makeText(this, "Microphone permission denied; video will have no audio", Toast.LENGTH_LONG).show()
+    }
+
     private val permissionLauncher = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
         if (it[Manifest.permission.CAMERA] == true) startCamera()
         if (it[Manifest.permission.ACCESS_FINE_LOCATION] == true || it[Manifest.permission.ACCESS_COARSE_LOCATION] == true) refreshLocation()
@@ -520,6 +527,10 @@ class MainActivity : ComponentActivity() {
             current.stop()
             capture.text = "■"
             Toast.makeText(this, "Stopping video…", Toast.LENGTH_SHORT).show()
+            return
+        }
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            microphonePermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
             return
         }
         val name = "CameraPlus_${SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())}.mp4"
